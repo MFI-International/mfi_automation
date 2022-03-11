@@ -1,35 +1,61 @@
 #include <Adafruit_ADS1X15.h>
 
+#include <SPI.h>
+#include <Ethernet.h>
+
 Adafruit_ADS1115 ads0;
 Adafruit_ADS1115 ads1;
 Adafruit_ADS1115 ads2;
 Adafruit_ADS1115 ads3;
 
-//the ads.begin() with no parameters defaults to 0b1001000
 #define ADDR_1 (0b1001001)
 #define ADDR_2 (0b1001010)
 #define ADDR_3 (0b1001011)
 
-void setup(void)
+// Enter a MAC address and IP address for your controller below.
+// The IP address will be dependent on your local network:
+byte mac[] = {
+    0xA8, 0x61, 0x0A, 0xAE, 0x75, 0x2C};
+IPAddress ip(192, 168, 1, 177);
+
+int8_t adc_number = 0;
+double adcVals[16] = {1.1, 2, 1.5, 3.1, 4, 5, 6, 1.6, 8.4, 1.1, 2, 1, 3.1, 4, 5, 6};
+
+// Initialize the Ethernet server library
+// with the IP address and port you want to use
+// (port 80 is default for HTTP):
+EthernetServer server(80);
+
+void setup()
 {
     Serial.begin(9600);
-    Serial.println("Hello!");
+    while (!Serial)
+    {
+        ; // wait for serial port to connect. Needed for native USB port only
+    }
+    Serial.println("Ethernet WebServer Example");
 
-    Serial.println("Getting single-ended readings from AIN0..3");
-    Serial.println("ADC Range: +/- 6.144V (1 bit = 3mV/ADS1015, 0.1875mV/ADS1115)");
+    // start the Ethernet connection and the server:
+    Ethernet.begin(mac, ip);
 
-    // The ADC input range (or gain) can be changed via the following
-    // functions, but be careful never to exceed VDD +0.3V max, or to
-    // exceed the upper and lower limits if you adjust the input range!
-    // Setting these values incorrectly may destroy your ADC!
-    //                                                                ADS1015  ADS1115
-    //                                                                -------  -------
-    // ads.setGain(GAIN_TWOTHIRDS);  // 2/3x gain +/- 6.144V  1 bit = 3mV      0.1875mV (default)
-    // ads.setGain(GAIN_ONE);        // 1x gain   +/- 4.096V  1 bit = 2mV      0.125mV
-    // ads.setGain(GAIN_TWO);        // 2x gain   +/- 2.048V  1 bit = 1mV      0.0625mV
-    // ads.setGain(GAIN_FOUR);       // 4x gain   +/- 1.024V  1 bit = 0.5mV    0.03125mV
-    // ads.setGain(GAIN_EIGHT);      // 8x gain   +/- 0.512V  1 bit = 0.25mV   0.015625mV
-    // ads.setGain(GAIN_SIXTEEN);    // 16x gain  +/- 0.256V  1 bit = 0.125mV  0.0078125mV
+    // Check for Ethernet hardware present
+    if (Ethernet.hardwareStatus() == EthernetNoHardware)
+    {
+        Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+        while (true)
+        {
+            delay(1); // do nothing, no point running without Ethernet hardware
+        }
+    }
+    if (Ethernet.linkStatus() == LinkOFF)
+    {
+        Serial.println("Ethernet cable is not connected.");
+    }
+
+    // start the server
+    server.begin();
+    Serial.print("server is at ");
+    Serial.println(Ethernet.localIP());
 
     if (!ads3.begin(ADDR_3))
     {
@@ -56,59 +82,131 @@ void setup(void)
         while (1)
             ;
     }
-}
-int8_t adc_number = 0;
 
-void loop(void)
+    // initialize the values into the array
+    for (int i = 0; i < 16; i++)
+    {
+        readADCVal(i, adcVals);
+    }
+}
+
+void readADCVal(int sensorNumber, double *sensorVals)
+{
+    int16_t adc;
+    double volts;
+
+    if (sensorNumber < 4)
+    {
+        adc = ads0.readADC_SingleEnded(sensorNumber);
+        volts = ads0.computeVolts(adc);
+    }
+    else if (sensorNumber > 3 && sensorNumber < 8)
+    {
+        adc = ads1.readADC_SingleEnded(sensorNumber - 4);
+        volts = ads1.computeVolts(adc);
+    }
+    else if (sensorNumber > 7 && sensorNumber < 12)
+    {
+        adc = ads2.readADC_SingleEnded(sensorNumber - 8);
+        volts = ads2.computeVolts(adc);
+    }
+    else
+    {
+        adc = ads3.readADC_SingleEnded(sensorNumber - 12);
+        volts = ads3.computeVolts(adc);
+    }
+    sensorVals[sensorNumber] = volts;
+}
+
+void loop()
 {
 
-    int16_t adc;
-    float volts;
+    unsigned long time = millis();
+    unsigned long deltaTime;
 
-    if (adc_number == 0)
+    // for (int i = 0; i < 16; i++)
+    // {
+    //     readADCVal(i, adcVals);
+    // }
+
+        deltaTime = millis() - time;
+    Serial.print("Time taken to record was:");
+    Serial.println(deltaTime);
+
+    time = millis();
+
+    // listen for incoming clients
+    EthernetClient client = server.available();
+
+    if (client)
     {
+        Serial.println("new client");
+        // an http request ends with a blank line
+        boolean currentLineIsBlank = true;
+        while (client.connected())
+        {
+            if (client.available())
+            {
+                char c = client.read();
+                // Serial.write(c);
+                //  if you've gotten to the end of the line (received a newline
+                //  character) and the line is blank, the http request has ended,
+                //  so you can send a reply
+                if (c == '\n' && currentLineIsBlank)
+                {
+                    // send a standard http response header
+                    client.println("HTTP/1.1 200 OK");
+                    client.println("Content-Type: application/json");
+                    client.println("Connection: close"); // the connection will be closed after completion of the response
+                    client.println("Refresh: 1");        // refresh the page automatically every 1 sec
+                    client.println();
+                    client.print("[");
+                    for (int i = 0; i < 16; i++)
+                    {
+                        client.print("{\"id\":");
+                        client.print(i);
+                        client.print(",\"value\":");
+                        client.print(adcVals[i]);
+                        if (i == 15)
+                        {
+                            client.print("}");
+                        }
+                        else
+                        {
+                            client.print("},");
+                        }
+                    }
+                    client.println("]");
+                    break;
+                }
+                if (c == '\n')
+                {
+                    // you're starting a new line
+                    currentLineIsBlank = true;
+                }
+                else if (c != '\r')
+                {
+                    // you've gotten a character on the current line
+                    currentLineIsBlank = false;
+                }
+            }
+        }
+        // give the web browser time to receive the data
+        delay(1);
+        // close the connection:
+        client.stop();
+        Serial.println("client disconnected");
 
-        adc = ads0.readADC_SingleEnded(0);
-        volts = ads0.computeVolts(adc);
-
-        Serial.print("A0:");
-        Serial.print(volts);
-        Serial.print("v     ");
-
-        adc_number = 1;
+        deltaTime = millis() - time;
+        Serial.print("Time taken to print was:");
+        Serial.println(deltaTime);
     }
-    else if (adc_number == 1)
-    {
-
-        adc = ads1.readADC_SingleEnded(0);
-        volts = ads1.computeVolts(adc);
-
-        Serial.print("A1:");
-        Serial.print(volts);
-        Serial.print("v     ");
-        adc_number = 2;
+    else
+    { // there is not a request from the client for sensor information, record the values
+        for (int i = 0; i < 16; i++)
+        {
+            readADCVal(i, adcVals);
+            // time quantum for recording all the adc values and storing them on an array is at least 160ms
+        }
     }
-    else if (adc_number == 2)
-    {
-        adc = ads2.readADC_SingleEnded(0);
-        volts = ads2.computeVolts(adc);
-
-        Serial.print("A2:");
-        Serial.print(volts);
-        Serial.print("v     ");
-        adc_number = 3;
-    }
-    else if (adc_number == 3)
-    {
-        adc = ads3.readADC_SingleEnded(0);
-        volts = ads3.computeVolts(adc);
-
-        Serial.print("A3:");
-        Serial.print(volts);
-        Serial.println("v");
-
-        adc_number = 0;
-    }
-
-    delay(25);
 }

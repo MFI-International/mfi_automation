@@ -47,3 +47,9 @@ The below libraries are necessary for running this project as is, to install the
 
 1. `Adafruit RA8875` by Adafruit
 1. `Adafruit GFX Library` by Adafruit
+
+## Setting up the Adruino Itself
+
+In order to run the code 'as is' please follow the schematic below.
+
+![This is an image](https://i.imgur.com/hlbVIjG.png)
