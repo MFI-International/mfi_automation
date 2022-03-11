@@ -2,6 +2,8 @@
 
 This repo contains the source code and documentation powering the real time **data aquisition** and **contol** project for MFI International's textile services.
 
+# Setup
+
 ## Downloading Visual Studio Code
 
 ### This project is best utilized using Visual Studio Code
@@ -53,3 +55,19 @@ The below libraries are necessary for running this project as is, to install the
 In order to run the code 'as is' please follow the schematic below.
 
 ![This is an image](https://i.imgur.com/hlbVIjG.png)
+
+# Implementation
+
+## Scheduling
+
+The program schedules between HTTP client request bursts and sensor reading bursts. The client request bursts have priority over sensor readings since they are not cyclical. Please note that this scheduling algorithm only works if the HTTP requests are no less than 240ms apart (the time it takes to pull the new sensor readings and serve it to the client). The next goal is to build context changes so there can be a limit on the time quantum for a process and drop the response time for the processes that need it (GUI etc...)
+
+```
+if( httpRequestExists == true ){
+    serveDataToClient();
+    // this takes about 80ms to complete
+}else{
+    readADCValues();
+    // this tkaes aout 160ms to complete
+}
+```
