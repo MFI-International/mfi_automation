@@ -1,6 +1,7 @@
 #include <Adafruit_ADS1X15.h>
-#include <SPI.h>
+#include <SDConfigCommand.h>
 
+#include <SPI.h>
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 
@@ -8,9 +9,18 @@
 #include <math.h>
 
 Adafruit_ADS1115 ads0;
+SDConfigCommand sdcc;
 
-byte mac[] = {0xA8, 0x61, 0x0A, 0xAE, 0x75, 0x2C};
+// Define chip select pin and file names
+#define CHIPSELECT 4
+#define SETTING_FILE "settings.cfg"
+
+byte mac[6] = {0xA8, 0x61, 0x0A, 0xAE, 0x75, 0x2C};
 IPAddress ip(192, 168, 1, 177);
+
+// strings of the IP and MAC address pulled from the SD card
+char macStr[16];
+char ipStr[16];
 
 unsigned int localPort = 8888; // local port to listen on
 
@@ -24,10 +34,6 @@ char ReplyBuffer[] = "acknowledged";       // a string to send back
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP Udp;
-
-// void udpWrite(*char cmd, *char val)
-// {
-// }
 
 void sendUPDString(char *string)
 {
@@ -71,7 +77,6 @@ void setup()
 {
 
     // start the Ethernet
-    Ethernet.begin(mac, ip);
 
     // Open serial communications and wait for port to open:
     Serial.begin(9600);
@@ -82,6 +87,30 @@ void setup()
 
     Serial.println("Serial Enabled with baud at 9600");
 
+    while (!(sdcc.set(SETTING_FILE, CHIPSELECT, processCmd)))
+    {
+    }
+
+    sdcc.readConfig();
+
+    for (int i = 0; i < 6; i++)
+    {
+        char subString[2];
+        char *ptr;
+        strncpy(subString, &macStr[i * 2], 2);
+        mac[i] = (byte)strtol(subString, &ptr, 16);
+    }
+
+    for (int i = 0; i < 4; i++)
+    {
+        uint8_t ipVals[4];
+        char subString[3];
+        char *ptr;
+        strncpy(subString, &ipStr[i * 4], 3);
+        ipVals[i] = (byte)strtol(subString, &ptr, 10);
+        ip = ip(ipVals[0], )
+    }
+    Ethernet.begin(mac, ip);
     // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware)
     {
