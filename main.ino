@@ -16,7 +16,7 @@ SDConfigCommand sdcc;
 #define SETTING_FILE "settings.cfg"
 
 byte mac[6] = {0xA8, 0x61, 0x0A, 0xAE, 0x75, 0x2C};
-IPAddress ip(192, 168, 1, 177);
+// IPAddress ip(192, 168, 1, 177);
 
 // strings of the IP and MAC address pulled from the SD card
 char macStr[16];
@@ -73,6 +73,35 @@ char *getCommandType(char *command)
     // Serial.println(type);
     return type;
 }
+
+void processCmd()
+{
+    // This function will run every time there is a command
+    // You can then check the command and value and dictate the next action
+
+    if (strcmp(sdcc.getCmd(), "STL") == 0)
+    {
+        transitionLevels = atoi(sdcc.getValue()); // You can manually convert the returned c-string as well
+    }
+    else if (strcmp(sdcc.getCmd(), "ABC") == 0)
+    {
+        autoBroadcasting = atoi(sdcc.getValue()); // You can manually convert the returned c-string as well
+    }
+    else if (strcmp(sdcc.getCmd(), "IPA") == 0)
+    {
+        strcpy(ipStr, sdcc.getValue());
+    }
+    else if (strcmp(sdcc.getCmd(), "MAC") == 0)
+    {
+        strcpy(macStr, sdcc.getValue()); // Use strcpy instead of = for c-string
+    }
+    else
+    {
+        Serial.print(sdcc.getCmd());
+        Serial.println(F(" is an unrecognised command."));
+    }
+}
+
 void setup()
 {
 
@@ -101,15 +130,21 @@ void setup()
         mac[i] = (byte)strtol(subString, &ptr, 16);
     }
 
+    uint8_t ipVals[4];
+
     for (int i = 0; i < 4; i++)
     {
-        uint8_t ipVals[4];
+
         char subString[3];
         char *ptr;
         strncpy(subString, &ipStr[i * 4], 3);
         ipVals[i] = (byte)strtol(subString, &ptr, 10);
-        ip = ip(ipVals[0], )
     }
+
+    Serial.println(ipStr);
+
+    IPAddress ip(ipVals[0], ipVals[1], ipVals[2], ipVals[3]);
+
     Ethernet.begin(mac, ip);
     // Check for Ethernet hardware present
     if (Ethernet.hardwareStatus() == EthernetNoHardware)

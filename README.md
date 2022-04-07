@@ -56,18 +56,180 @@ In order to run the code 'as is' please follow the schematic below.
 
 ![This is an image](https://i.imgur.com/hlbVIjG.png)
 
-# Implementation
+# API
 
-## Scheduling
+The program has the below set of insructions to communicate between client and server. Pease not e that **these are subject to change and additions as needed**
 
-The program schedules between HTTP client request bursts and sensor reading bursts. The client request bursts have priority over sensor readings since they are not cyclical. Please note that this scheduling algorithm only works if the HTTP requests are no less than 240ms apart (the time it takes to pull the new sensor readings and serve it to the client). The next goal is to build context changes so there can be a limit on the time quantum for a process and drop the response time for the processes that need it (GUI etc...)
+## General Usagge
+
+1. The general syntax of the protocol is `[CMD]:[VAL],...[VAL]`, where `[CMD]` is the command and `[VAL]` are the values attributed to that command. There might be more than one value required for a given command
+1. Commands that are initiated from the client are titled `(A->S)`
+1. Commands that are initiated from the server are titled `(S->A)`
+
+## Commands
+
+---
+
+### **Login `(A->S)`**
+
+#### Request:
 
 ```
-if( httpRequestExists == true ){
-    serveDataToClient();
-    // this takes about 80ms to complete
-}else{
-    readADCValues();
-    // this tkaes aout 160ms to complete
-}
+LGN:[userID],[machineID]
 ```
+
+- **userID** `(uint16_t)`: The unique ID of each user.
+- **machineID** `(uint16_t)`: The unique ID of each machine.
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+LGN:[userName],[target],[completed]
+LGN:ERR,[errorCode]
+```
+
+- **userName** `(string)`: The name of the user associated with **userID**.
+- **target** `(uint16_t)`: The starting target value for the user associated with **userID**.
+- **completed** `(uint16_t)`: The starting completed value for the user associated with **userID**.
+- **errorCode** `(uint8_t)`: Code given on error related to the given **userID**.
+  - `0` : **userID** not found.
+  - `1` : **userID** not certified for machine
+  - `2` : Internal Error.
+
+---
+
+### **Logout `(S->A)`**
+
+#### Request:
+
+```
+LGO:[]
+```
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+LGN:[]
+LGN:ERR,[errorCode]
+```
+
+- **errorCode** `(uint8_t)`: Code given on error related to logging out of the related machine.
+
+  - `0` : no one is logged into the machine.
+  - `1` : Internal Error.
+
+---
+
+### **Set Target `(S->A)`**
+
+#### Request:
+
+```
+TAR:[target]
+```
+
+- **target** `(uint16_t)`: The target value to be set to the machine.
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+TAR:[target]
+Tar:ERR,[errorCode]
+```
+
+- **target** `(uint16_t)`: The target value set to the machine.
+- **errorCode** `(uint8_t)`: Code given on error related to the given **target** value.
+  - `0` : Internal Error.
+
+---
+
+### **Set Completed `(S->A)`**
+
+#### Request:
+
+```
+CMP:[completed]
+```
+
+- **completed** `(uint16_t)`: The completed value to be set to the machine.
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+CMP:[completed]
+CMP:ERR,[errorCode]
+```
+
+- **completed** `(uint16_t)`: The completed value set to the machine.
+- **errorCode** `(uint8_t)`: Code given on error related to the given **completed** value.
+  - `0` : Internal Error.
+
+---
+
+### **State Change `(A->S)`**
+
+#### Request:
+
+```
+SCH:[level]
+```
+
+- **level** `(uint16_t)`: The level the analog to digital converter is now reading. _note that the levels ranges from 0 to the max level given in the `STL` command_
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+SCH:[level]
+SCH:ERR,[errorCode]
+```
+
+- **level** `uint8_t`: The new **level** recieved by the server.
+- **errorCode** `(uint8_t)`: Code given on error related to the given **level**.
+  - `0` : **level** value given not found between 0 and **levels** given in `STL` command.
+  - `1` : Internal Error.
+
+---
+
+### **Set Number of Transition Levels `(S->A)`**
+
+#### Request:
+
+```
+STL:[levels]
+```
+
+- **levels** `(uint8_t)`: The max number of equally spaced levels the analog to digital converter will now use to calcualte when to trigger the `SCH` command. Ranges from 0 to 100. The formula for calculation of states is `state = ceil([currentVoltage] * [levels]) / [maxVoltage] `
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+STL:[levels]
+RST:ERR,[errorCode]
+```
+
+- **levels** `(uint8_t)`: The number of state transition levels the machine is now broadcasting with.
+- **errorCode** `(uint8_t)`: Code given on error related to the **levels** value given.
+  - `0` : Levels value not in range.
+  - `1` : Internal Error.
+
+---
+
+### **Reset Machine `(S->A)`**
+
+#### Request:
+
+```
+RST:[]
+```
+
+#### Response: ( Successfull / Unsuccessfull )
+
+```
+RST:[]
+RST:ERR,[errorCode]
+```
+
+- **errorCode** `(uint8_t)`: Code given on error related to resetting the related machine.
+  - `0` : Internal Error.
+
+---
