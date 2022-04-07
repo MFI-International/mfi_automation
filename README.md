@@ -179,11 +179,9 @@ SCH:[level]
 #### Response: ( Successfull / Unsuccessfull )
 
 ```
-SCH:[level]
 SCH:ERR,[errorCode]
 ```
 
-- **level** `uint8_t`: The new **level** recieved by the server.
 - **errorCode** `(uint8_t)`: Code given on error related to the given **level**.
   - `0` : **level** value given not found between 0 and **levels** given in `STL` command.
   - `1` : Internal Error.
