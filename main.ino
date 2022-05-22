@@ -1,111 +1,47 @@
-#include <Adafruit_ADS1X15.h>
-#include <SDConfigCommand.h>
-
 #include <SPI.h>
+#include <SD.h>
+
+#include "Adafruit_GFX.h"
+#include "Adafruit_RA8875.h"
+
+#include "Fonts/TomThumb.h"
+
+#include <math.h>
+
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 
-#include <string.h>
-#include <math.h>
+#define SETTINGS_FILE_NAME "settings.cfg"
+#define MAX_SETTINGS 10
 
-Adafruit_ADS1115 ads0;
-SDConfigCommand sdcc;
-
-// Define chip select pin and file names
-#define CHIPSELECT 4
-#define SETTING_FILE "settings.cfg"
-
-byte mac[6] = {0xA8, 0x61, 0x0A, 0xAE, 0x75, 0x2C};
-// IPAddress ip(192, 168, 1, 177);
-
-// strings of the IP and MAC address pulled from the SD card
-char macStr[16];
-char ipStr[16];
-
-unsigned int localPort = 8888; // local port to listen on
-
-bool autoBroadcasting = 1;
-double adcLevel; // out of 5v
-int transitionLevels = 5;
-
-// buffers for receiving and sending data
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE]; // buffer to hold incoming packet,
-char ReplyBuffer[] = "acknowledged";       // a string to send back
-
-// An EthernetUDP instance to let us send and receive packets over UDP
+File myFile;
 EthernetUDP Udp;
 
-void sendUPDString(char *string)
-{
-    Udp.beginPacket(Udp.remoteIP(), 5555);
-    Udp.write(string);
-    Udp.endPacket();
-}
+// global variables
+int16_t localPort = 8888;
+int16_t remotePort = 5555;
 
-int getCommandVaue(char *command)
-{
-    // value is the total UDP packet size (24 bytes) minus the command size (4 bytes, "XXX:") at command index 4
-    char val[20];
-    strncpy(val, &command[4], 20);
-    return atoi(val);
-}
+uint8_t autoBroadcasting = 1;
+uint8_t transitionLevels = 1;
 
-bool commandValValid(int begin, int end, char *command)
-{
-    Serial.println(getCommandVaue(command));
-    if (command[4] == ' ' || command[4] == 13)
-    {
-        return 0;
-    }
+bool loggedIn;
+char userName[15];
+uint8_t target;
+uint8_t completed;
 
-    if (getCommandVaue(command) > end || getCommandVaue(command) < begin)
-    {
-        return 0;
-    }
-    return 1;
-}
+byte macAddress[6] = {0, 0, 0, 0, 0, 0};
+byte ipAddress[4] = {192, 168, 0, 177};
 
-char *getCommandType(char *command)
-{
-    char type[4];
-    strncpy(type, &command[0], 3);
-    type[3] = '\0';
-    // Serial.println(type);
-    return type;
-}
+uint16_t lastADCValue;
 
-void processCmd()
-{
-    // This function will run every time there is a command
-    // You can then check the command and value and dictate the next action
+#define RA8875_INT 3
+#define RA8875_CS 6
+#define RA8875_RESET 9
 
-    if (strcmp(sdcc.getCmd(), "STL") == 0)
-    {
-        transitionLevels = atoi(sdcc.getValue()); // You can manually convert the returned c-string as well
-    }
-    else if (strcmp(sdcc.getCmd(), "ABC") == 0)
-    {
-        autoBroadcasting = atoi(sdcc.getValue()); // You can manually convert the returned c-string as well
-    }
-    else if (strcmp(sdcc.getCmd(), "IPA") == 0)
-    {
-        strcpy(ipStr, sdcc.getValue());
-    }
-    else if (strcmp(sdcc.getCmd(), "MAC") == 0)
-    {
-        strcpy(macStr, sdcc.getValue()); // Use strcpy instead of = for c-string
-    }
-    else
-    {
-        Serial.print(sdcc.getCmd());
-        Serial.println(F(" is an unrecognised command."));
-    }
-}
+Adafruit_RA8875 tft = Adafruit_RA8875(RA8875_CS, RA8875_RESET);
 
 void setup()
 {
-
-    // start the Ethernet
 
     // Open serial communications and wait for port to open:
     Serial.begin(9600);
@@ -114,69 +50,50 @@ void setup()
         ; // wait for serial port to connect. Needed for native USB port only
     }
 
-    Serial.println("Serial Enabled with baud at 9600");
+    //*************
 
-    while (!(sdcc.set(SETTING_FILE, CHIPSELECT, processCmd)))
+    if (!tft.begin(RA8875_800x480))
     {
-    }
-
-    sdcc.readConfig();
-
-    for (int i = 0; i < 6; i++)
-    {
-        char subString[2];
-        char *ptr;
-        strncpy(subString, &macStr[i * 2], 2);
-        mac[i] = (byte)strtol(subString, &ptr, 16);
-    }
-
-    uint8_t ipVals[4];
-
-    for (int i = 0; i < 4; i++)
-    {
-
-        char subString[3];
-        char *ptr;
-        strncpy(subString, &ipStr[i * 4], 3);
-        ipVals[i] = (byte)strtol(subString, &ptr, 10);
-    }
-
-    Serial.println(ipStr);
-
-    IPAddress ip(ipVals[0], ipVals[1], ipVals[2], ipVals[3]);
-
-    Ethernet.begin(mac, ip);
-    // Check for Ethernet hardware present
-    if (Ethernet.hardwareStatus() == EthernetNoHardware)
-    {
-        Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
-        while (true)
-        {
-            delay(1); // do nothing, no point running without Ethernet hardware
-        }
-    }
-    if (Ethernet.linkStatus() == LinkOFF)
-    {
-        Serial.println("Ethernet cable is not connected.");
-    }
-
-    if (!ads0.begin())
-    {
-        Serial.println("Failed to initialize ADS Board #0.");
+        Serial.println("RA8875 Not Found!");
         while (1)
             ;
     }
 
-    // start UDP
-    Udp.begin(localPort);
+    pinMode(13, OUTPUT);
+    digitalWrite(13, LOW);
+
+    tft.displayOn(true);
+    tft.GPIOX(true);                              // Enable TFT - display enable tied to GPIOX
+    tft.PWM1config(true, RA8875_PWM_CLK_DIV1024); // PWM output for backlight
+    tft.PWM1out(255);
+
+    /* Switch to text mode */
+    tft.textMode();
+    tft.setFont(&TomThumb);
+    tft.cursorBlink(32);
+
+    /* Set the cursor location (in pixels) */
+    tft.textSetCursor(10, 10);
+
+    /* Render some text! */
+    char string[15] = "Hello, World! ";
+
+    printLoggedOutDisplay();
+
+    // //**********
+
+    readConfigFile();
+    initializeUDP();
 }
 
 void loop()
 {
+
     /* if there's data available, read a packet */
     int packetSize = Udp.parsePacket();
     if (packetSize)
     {
+
         Serial.print("Received packet of size ");
         Serial.println(packetSize);
         Serial.print("From ");
@@ -191,84 +108,391 @@ void loop()
         }
         Serial.print(", port ");
         Serial.println(Udp.remotePort());
+        char *packetBuffer;
+        packetBuffer = (char *)calloc(UDP_TX_PACKET_MAX_SIZE, sizeof(char)); // allocate heap for buffer and set to 0
 
         /* read the packet into packetBufffer */
         Udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-        Serial.println("Contents:");
-        Serial.println(packetBuffer);
 
         if (packetBuffer[3] != ':')
         {
-            Udp.beginPacket(Udp.remoteIP(), 5555);
-            Udp.write("ERR:invald_cmd_format");
-            Udp.endPacket();
+            sendUPDString("ERR:invalid_cmd_format");
         }
         else
         {
-            if (packetBuffer[0] == 'S' && packetBuffer[1] == 'A' && packetBuffer[2] == 'B') // Enable or Disable Autobroadcasting
+            char *key = (char *)calloc(4, sizeof(char));
+            char *val = (char *)calloc(packetSize - 5, sizeof(char));
+            strncpy(key, packetBuffer, 3);
+            strncpy(val, packetBuffer + 4, packetSize - 6);
+
+            if (!strcmp(key, "LGN")) // Enable or Disable Autobroadcasting
             {
 
-                if (commandValValid(0, 1, packetBuffer))
+                char *tgt = (char *)malloc(sizeof(char));
+                char *cmp = (char *)malloc(sizeof(char));
+
+                uint8_t lastValIndex = 0;
+                uint8_t valCount = 0;
+
+                for (uint8_t i = 0; i <= strlen(val); i++)
                 {
-                    autoBroadcasting = getCommandVaue(packetBuffer);
-                    sendUPDString(packetBuffer);
+                    if (val[i] == ',' || val[i] == '\0')
+                    {
+
+                        if (valCount == 0)
+                        {
+                            strncpy(userName, val + lastValIndex, i - lastValIndex);
+                            Serial.print("Username is: ");
+                            Serial.println(userName);
+                        }
+                        else if (valCount == 1)
+                        {
+                            strncpy(tgt, val + lastValIndex, i - lastValIndex);
+                            target = atoi(tgt);
+                        }
+                        else if (valCount == 2)
+                        {
+                            strncpy(cmp, val + lastValIndex, i - lastValIndex);
+                            completed = atoi(cmp);
+                        }
+                        else
+                        {
+                            sendUPDString("LGN:ERR:0");
+                        }
+                        lastValIndex = i + 1;
+                        valCount++;
+                    }
+                }
+                loggedIn = 1;
+
+                printLoggedInDisplay();
+                digitalWrite(13, HIGH);
+                free(tgt);
+                free(cmp);
+            }
+            else if (!strcmp(key, "LGO")) // Enable or Disable Autobroadcasting
+            {
+                if (loggedIn)
+                {
+                    loggedIn = 0;
+                    sendUPDString("LGO:1");
+                    digitalWrite(13, LOW);
+                    printLoggedOutDisplay();
                 }
                 else
                 {
-                    sendUPDString("ERR:invalid_cmd_value");
+                    sendUPDString("LGO:ERR,0");
                 }
             }
-            else if (packetBuffer[0] == 'S' && packetBuffer[1] == 'T' && packetBuffer[2] == 'L') // Set Num Transition Levels
+            else if (!strcmp(key, "TAR")) // Enable or Disable Autobroadcasting
             {
-                if (commandValValid(1, 100, packetBuffer))
+                if (isValueValid(0, 255, val))
                 {
-                    transitionLevels = getCommandVaue(packetBuffer);
+                    target = atoi(val);
+                    printLoggedInDisplay();
                     sendUPDString(packetBuffer);
                 }
                 else
                 {
-                    sendUPDString("ERR:invalid_cmd_value");
+                    sendUPDString("TAR:ERR,0");
                 }
+            }
+            else if (!strcmp(key, "CMP")) // Enable or Disable Autobroadcasting
+            {
+                if (isValueValid(0, 255, val))
+                {
+                    completed = atoi(val);
+                    printLoggedInDisplay();
+                    sendUPDString(packetBuffer);
+                }
+                else
+                {
+                    sendUPDString("CMP:ERR,0");
+                }
+            }
+            else if (!strcmp(key, "SAB")) // Enable or Disable Autobroadcasting
+            {
+                if (isValueValid(0, 1, val))
+                {
+                    autoBroadcasting = atoi(val);
+                    sendUPDString(packetBuffer);
+                }
+                else
+                {
+                    sendUPDString("SAB:ERR,0");
+                }
+            }
+            else if (!strcmp(key, "STL")) // Set Num Transition Levels
+            {
+                if (isValueValid(1, 100, val))
+                {
+                    transitionLevels = atoi(val);
+                    sendUPDString(packetBuffer);
+                }
+                else
+                {
+                    sendUPDString("STL:ERR,0");
+                }
+            }
+            else if (!strcmp(key, "RST")) // Set Num Transition Levels
+            {
+                sendUPDString("RST:1");
+                // TODO
             }
             else if (packetBuffer[0] == 'V' && packetBuffer[1] == 'A' && packetBuffer[2] == 'L') // Get Transition level value
             {
+                // int16_t adc;
+                // double volts;
 
-                int16_t adc;
-                double volts;
-
-                adc = ads0.readADC_SingleEnded(0);
-                volts = ads0.computeVolts(adc);
-                double currentLevel = ceil((double)(volts * transitionLevels) / 5);
-                char cmdOut[6];
-                sprintf(cmdOut, "VAL:%d", (int)currentLevel);
-                sendUPDString(cmdOut);
+                // adc = ads0.readADC_SingleEnded(0);
+                // volts = ads0.computeVolts(adc);
+                // double currentLevel = ceil((double)(volts * transitionLevels) / 5);
+                // char cmdOut[6];
+                // sprintf(cmdOut, "VAL:%d", (int)currentLevel);
+                // sendUPDString(cmdOut);
             }
             else
             {
                 sendUPDString("ERR:invalid_cmd");
             }
+            free(key);
+            free(val);
         }
+        free(packetBuffer);
     }
 
-    if (autoBroadcasting)
+    if (autoBroadcasting && loggedIn)
     {
 
-        int16_t adc;
-        double volts;
+        uint16_t currentADCValue;
 
-        adc = ads0.readADC_SingleEnded(0);
-        volts = ads0.computeVolts(adc);
-
-        double currentLevel = ceil((double)(volts * transitionLevels) / 5);
-        if (ceil((double)(adcLevel * transitionLevels) / 5) != currentLevel)
+        currentADCValue = analogRead(0);
+        double currentLevel = ceil((double)(currentADCValue * transitionLevels) / 1023);
+        if (ceil((double)(lastADCValue * transitionLevels) / 1023) != currentLevel)
         {
-            adcLevel = volts;
+            lastADCValue = currentADCValue;
 
             char cmdOut[6];
-            sprintf(cmdOut, "VAL:%d", (int)currentLevel);
+            sprintf(cmdOut, "SCH:%d", (int)currentLevel);
 
             sendUPDString(cmdOut);
         }
     }
+
+    // Serial.print("Logged in: ");
+    // Serial.print(loggedIn);
+    // Serial.print("      |     User: ");
+    // Serial.print(userName);
+    // Serial.print("      |     Target: ");
+    // Serial.print(target);
+    // Serial.print("      |     Completed : ");
+    // Serial.println(completed);
     delay(10);
+}
+
+int initializeUDP()
+{
+
+    IPAddress ip(ipAddress[0], ipAddress[1], ipAddress[2], ipAddress[3]);
+    Ethernet.begin(macAddress, ip);
+
+    if (Ethernet.hardwareStatus() == EthernetNoHardware)
+    {
+        Serial.println("Ethernet shield was not found.  Sorry, can't run without hardware. :(");
+        while (true)
+        {
+            delay(1); // do nothing, no point running without Ethernet hardware
+        }
+    }
+    if (Ethernet.linkStatus() == LinkOFF)
+    {
+        Serial.println("Ethernet cable is not connected.");
+    }
+
+    Udp.begin(localPort);
+}
+
+// reads all values from settings file, returns 0 on success, -1 on error.
+int readConfigFile()
+{
+
+    Serial.print("Initializing SD card...");
+
+    if (!SD.begin(4))
+    {
+        Serial.println("initialization failed!");
+    }
+
+    Serial.println("initialization done.");
+
+    char *fileBuffer;                        // Declare a pointer to your buffer.
+    myFile = SD.open(F(SETTINGS_FILE_NAME)); // Open file for reading.
+    if (myFile)
+    {
+        unsigned int fileSize = myFile.size();     // Get the file size.
+        fileBuffer = (char *)malloc(fileSize + 1); // Allocate memory for the file and a terminating null char.
+        myFile.read(fileBuffer, fileSize);         // Read the file into the buffer.
+        fileBuffer[fileSize] = '\0';               // Add the terminating null char.
+        // Serial.println(fileBuffer);                // Print the file to the serial monitor.
+        myFile.close(); // Close the file.
+        SD.end();
+    }
+
+    uint8_t newLineIndex = 0; // newLineIndex index is the character index of the first character of a new line (not \n)
+    for (uint8_t i = 0; i <= strlen(fileBuffer); i++)
+    {
+
+        if (fileBuffer[i] == (char)13 || fileBuffer[i] == '\0') // has reached the end of a line or the end of the buffer
+        {
+            if (fileBuffer[newLineIndex] != '/' && fileBuffer[newLineIndex] != char(13) && fileBuffer[newLineIndex] != ' ') // check if the value at the beginning of the line is a comment or a blank line
+            {
+                if (fileBuffer[newLineIndex + 3] != '=')
+                {
+                    Serial.println("Error: Incorrect file formatting");
+                    return -1;
+                }
+
+                char *key;
+                char *value;
+                key = (char *)malloc(4);
+                value = (char *)malloc(20);
+
+                strlcpy(key, fileBuffer + newLineIndex, 4);
+                strlcpy(value, fileBuffer + newLineIndex + 4, i - (newLineIndex + 4) + 1);
+                if (assignValues(key, value) == -1)
+                {
+                    Serial.println("Error: Unknown key:value pair");
+                    return -1;
+                }
+
+                free(key);
+                free(value);
+            }
+            newLineIndex = i + 2;
+        }
+    }
+
+    free(fileBuffer);
+    return 0;
+}
+
+void printLoggedOutDisplay()
+{
+
+    tft.fillScreen(RA8875_BLACK);
+    tft.textTransparent(RA8875_WHITE);
+    tft.textEnlarge(4);
+    tft.textSetCursor(80, 50);
+    tft.textWrite("MFI Sewing Assistant");
+    tft.textSetCursor(80, 120);
+    tft.textWrite("v0.1.0");
+    tft.textEnlarge(1);
+    tft.textSetCursor(80, 220);
+    tft.textWrite("Please place your card aganst the NFC");
+    tft.textSetCursor(80, 250);
+    tft.textWrite("reader to log in.");
+    tft.textSetCursor(1000, 1000);
+}
+
+void printLoggedInDisplay()
+{
+
+    char tar[4];
+    sprintf(tar, "%d", target);
+
+    char comp[4];
+    sprintf(comp, "%d", completed);
+
+    tft.fillScreen(RA8875_BLACK);
+    tft.textTransparent(RA8875_WHITE);
+    tft.textEnlarge(4);
+    tft.textSetCursor(80, 50);
+    tft.textWrite("Welcome: ");
+    tft.textWrite(userName);
+    tft.textSetCursor(80, 120);
+    tft.textEnlarge(2);
+    tft.textSetCursor(80, 220);
+    tft.textWrite("Target: ");
+    tft.textWrite(tar);
+    tft.textSetCursor(80, 270);
+    tft.textWrite("Completed: ");
+    tft.textWrite(comp);
+    tft.textSetCursor(1000, 1000);
+}
+
+uint8_t assignValues(char *key, char *val)
+{
+
+    if (!strcmp(key, "ABC"))
+    {
+        autoBroadcasting = atoi(val);
+        return 0;
+    }
+    else if (!strcmp(key, "STL"))
+    {
+        transitionLevels = atoi(val);
+        return 0;
+    }
+    else if (!strcmp(key, "IPA"))
+    {
+        parseBytes(val, '.', ipAddress, 4, 10);
+        return 0;
+    }
+    else if (!strcmp(key, "MAC"))
+    {
+        parseBytes(val, ':', macAddress, 6, 16);
+        return 0;
+    }
+    else
+    {
+        return -1;
+    }
+}
+
+// converts any symbol separated value in string form to an array of bytes
+void parseBytes(const char *str, char sep, byte *bytes, int maxBytes, int base)
+{
+    for (int i = 0; i < maxBytes; i++)
+    {
+        bytes[i] = strtoul(str, NULL, base); // Convert byte
+        str = strchr(str, sep);              // Find next separator
+        if (str == NULL || *str == '\0')
+        {
+            break; // No more separators, exit
+        }
+        str++; // Point to next character after separator
+    }
+}
+
+void sendUPDString(char *string)
+{
+    Udp.beginPacket(Udp.remoteIP(), remotePort);
+    Udp.write(string);
+    Udp.endPacket();
+}
+
+int getCommandVaue(char *command)
+{
+    // value is the total UDP packet size (24 bytes) minus the command size (4 bytes, "XXX:") at command index 4
+    char val[20];
+    strncpy(val, &command[4], 20);
+    return atoi(val);
+}
+
+// checks if an incoming value in key value pair is valid.
+bool isValueValid(int begin, int end, char *value)
+{
+    int val = atoi(value);
+
+    // check if the beggining of the value is valid
+    if (value[4] == ' ' || value[4] == 13)
+    {
+        return 0;
+    }
+
+    if (val > end || val < begin)
+    {
+        return 0;
+    }
+    return 1;
 }
