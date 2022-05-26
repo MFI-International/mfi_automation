@@ -11,6 +11,8 @@
 #include <Ethernet.h>
 #include <EthernetUdp.h>
 
+#include <MFRC522.h>
+
 #define SETTINGS_FILE_NAME "settings.cfg"
 #define MAX_SETTINGS 10
 
@@ -18,13 +20,17 @@ File myFile;
 EthernetUDP Udp;
 
 // global variables
+char version[10] = "0.20.0";
+
 int16_t localPort = 8888;
 int16_t remotePort = 5555;
 
 uint8_t autoBroadcasting = 1;
 uint8_t transitionLevels = 1;
 
-bool loggedIn;
+uint8_t machineId = 0;
+
+bool loggedIn = false;
 char userName[15];
 uint8_t target;
 uint8_t completed;
@@ -39,6 +45,14 @@ uint16_t lastADCValue;
 #define RA8875_RESET 9
 
 Adafruit_RA8875 tft = Adafruit_RA8875(RA8875_CS, RA8875_RESET);
+
+#define SS_PIN 53
+#define RST_PIN 8
+
+MFRC522 rfid(SS_PIN, RST_PIN); // Instance of the class
+MFRC522::MIFARE_Key key;
+
+byte nuidPICC[4] = {0x80, 0xFD, 0xB3, 0x1B};
 
 void setup()
 {
@@ -59,9 +73,11 @@ void setup()
             ;
     }
 
-    pinMode(13, OUTPUT);
-    digitalWrite(13, LOW);
+    // init pot
+    pinMode(2, OUTPUT);
+    digitalWrite(2, LOW);
 
+    // init display
     tft.displayOn(true);
     tft.GPIOX(true);                              // Enable TFT - display enable tied to GPIOX
     tft.PWM1config(true, RA8875_PWM_CLK_DIV1024); // PWM output for backlight
@@ -79,6 +95,13 @@ void setup()
     char string[15] = "Hello, World! ";
 
     printLoggedOutDisplay();
+
+    for (byte i = 0; i < 6; i++)
+    {
+        key.keyByte[i] = 0xFF;
+    }
+
+    rfid.PCD_Init(); // Init MFRC522
 
     // //**********
 
@@ -166,7 +189,7 @@ void loop()
                 loggedIn = 1;
 
                 printLoggedInDisplay();
-                digitalWrite(13, HIGH);
+                digitalWrite(2, HIGH);
                 free(tgt);
                 free(cmp);
             }
@@ -176,7 +199,7 @@ void loop()
                 {
                     loggedIn = 0;
                     sendUPDString("LGO:1");
-                    digitalWrite(13, LOW);
+                    digitalWrite(2, LOW);
                     printLoggedOutDisplay();
                 }
                 else
@@ -278,16 +301,41 @@ void loop()
             sendUPDString(cmdOut);
         }
     }
+    else if (!loggedIn)
+    {
 
-    // Serial.print("Logged in: ");
-    // Serial.print(loggedIn);
-    // Serial.print("      |     User: ");
-    // Serial.print(userName);
-    // Serial.print("      |     Target: ");
-    // Serial.print(target);
-    // Serial.print("      |     Completed : ");
-    // Serial.println(completed);
-    delay(10);
+        if (!rfid.PICC_IsNewCardPresent())
+            return;
+
+        // Verify if the NUID has been readed
+        if (!rfid.PICC_ReadCardSerial())
+            return;
+
+        Serial.print(F("PICC type: "));
+        MFRC522::PICC_Type piccType = rfid.PICC_GetType(rfid.uid.sak);
+        Serial.println(rfid.PICC_GetTypeName(piccType));
+
+        // Check is the PICC of Classic MIFARE type
+        if (piccType != MFRC522::PICC_TYPE_MIFARE_MINI &&
+            piccType != MFRC522::PICC_TYPE_MIFARE_1K &&
+            piccType != MFRC522::PICC_TYPE_MIFARE_4K)
+        {
+            Serial.println(F("Your tag is not of type MIFARE Classic."));
+            return;
+        }
+
+        Serial.println(F("Read card."));
+        char loginString[20];
+        sprintf(loginString, "LGN:%x:%x:%x:%x,%d", rfid.uid.uidByte[3], rfid.uid.uidByte[2], rfid.uid.uidByte[1], rfid.uid.uidByte[0], machineId);
+        sendUPDString(loginString);
+
+        // Halt PICC
+        rfid.PICC_HaltA();
+
+        // Stop encryption on PCD
+        rfid.PCD_StopCrypto1();
+    }
+    // delay(10);
 }
 
 int initializeUDP()
@@ -385,7 +433,7 @@ void printLoggedOutDisplay()
     tft.textSetCursor(80, 50);
     tft.textWrite("MFI Sewing Assistant");
     tft.textSetCursor(80, 120);
-    tft.textWrite("v0.1.0");
+    tft.textWrite(version);
     tft.textEnlarge(1);
     tft.textSetCursor(80, 220);
     tft.textWrite("Please place your card aganst the NFC");
@@ -442,6 +490,10 @@ uint8_t assignValues(char *key, char *val)
     {
         parseBytes(val, ':', macAddress, 6, 16);
         return 0;
+    }
+    else if (!strcmp(key, "MID"))
+    {
+        machineId = atoi(val);
     }
     else
     {
